@@ -28,6 +28,8 @@ jobs:
         run: shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
       - name: Parser/unit and fresh transaction fixtures (service/path/journal transport mocked)
         run: bash tests/run.sh && bash tests/fresh.sh && bash tests/fresh-rollback.sh && bash tests/download.sh && bash tests/bootstrap_versions.sh && bash tests/preflight.sh
+      - name: Private WEB link identity, read-only menu and committed Install display (real root/PTY; lifecycle mocked)
+        run: sudo python3 tests/web_link_fixture.py
       - name: Real fresh account and owned runtime-state rollback (temporary root-owned fixtures)
         run: sudo bash tests/fresh-account.sh
       - name: Pinned Telemt 3.5.12 release provenance and real config healthcheck (no runtime)

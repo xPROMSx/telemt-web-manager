@@ -1466,6 +1466,82 @@ def certificate_cleanup_remove(plan):
     os.rmdir(value['state'])
 
 
+def web_link_value(manifest_raw, config_raw, link_raw):
+    """Validate secret identity in memory; never include input in diagnostics."""
+    manifest = json.loads(manifest_raw, object_pairs_hook=journal_object,
+                          parse_constant=journal_constant)
+    require(type(manifest) is dict and type(manifest.get('schema')) is int
+            and manifest['schema'] == 1)
+    host = domain(manifest['domain'])
+    for name in ('unit_sha256', 'nginx_sha256'):
+        require(isinstance(manifest.get(name), str)
+                and re.fullmatch(r'[0-9a-f]{64}', manifest[name]))
+    require(not re.search(rb'(?m)^\s*include\s*=', config_raw))
+    config = tomllib.loads(config_raw.decode('utf-8'))
+    require(not any(k in config for k in ('include', 'includes')))
+    web = config['web']
+    require(web.get('enabled') is True and len(web['vhosts']) == 1)
+    vhost = web['vhosts'][0]
+    require(vhost['host'] == host and len(vhost['profiles']) == 1)
+    profile = vhost['profiles'][0]
+    require(profile['user'] == 'web-user' and profile['secret_mode'] == 'dd')
+    users = config['access']['users']
+    require(set(users) == {'web-user'} and isinstance(users['web-user'], str)
+            and re.fullmatch(r'[0-9a-f]{32}', users['web-user']))
+    require(config['access'].get('user_enabled', {}).get('web-user', True) is True)
+    # Canonical manager-written bytes: one ASCII line, one terminal LF, no extras.
+    expected = f'tg://webproxy?server={host}&secret=dd{users["web-user"]}\n'.encode('ascii')
+    require(link_raw == expected)
+    return expected[:-1].decode('ascii')
+
+
+def web_link_read(path, modes, limit):
+    safe_path(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == 0
+                and before.st_nlink == 1 and stat.S_IMODE(before.st_mode) in modes
+                and before.st_size <= limit)
+        raw = bytearray()
+        while block := os.read(fd, min(65536, limit + 1 - len(raw))):
+            raw.extend(block)
+            require(len(raw) <= limit)
+        after = os.fstat(fd)
+        identity = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+                                 info.st_ctime_ns, info.st_uid, info.st_gid, info.st_mode, info.st_nlink)
+        require(identity(before) == identity(after) == identity(os.lstat(path)))
+        return bytes(raw)
+    finally:
+        os.close(fd)
+
+
+def current_web_link(state, config):
+    require(os.geteuid() == 0)
+    state = Path(state)
+    require(all(32 <= ord(c) < 127 for c in str(state)))
+    safe_path(state)
+    info = state.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o700)
+    return web_link_value(web_link_read(state / 'manifest.json', {0o600}, 16384),
+                          web_link_read(config, {0o600, 0o640}, 1024 * 1024),
+                          web_link_read(state / 'web-link.txt', {0o600}, 512))
+
+
+def display_web_link(state, config):
+    # Keep validation-only CLI silent; only this explicit terminal path prints.
+    require(sys.stdin.isatty() and sys.stdout.isatty())
+    link = current_web_link(state, config)
+    color = os.environ.get('TERM', '') != 'dumb' and not os.environ.get('NO_COLOR')
+    header, cyan, warning, reset = ('\033[1;32m', '\033[96m', '\033[33m', '\033[0m') if color else ('',) * 4
+    rule = '=' * 40
+    print(f'{header}{rule}\n        TELEGRAM WEB PROXY\n{rule}{reset}\n')
+    print('CURRENT CONNECTION LINK:\n')
+    print(f'{cyan}{link}{reset}\n')
+    print(f'{warning}WARNING: This link contains a bearer secret.\nStore it securely and do not share it.{reset}\n')
+    print(f'Saved locally:\n  {Path(state) / "web-link.txt"}\n\n{rule}')
+
+
 def main():
     command, *args = sys.argv[1:]
     if command == "semver":
@@ -1483,6 +1559,10 @@ def main():
         port80_config(args[0])
     elif command == "config-info":
         config_info(*args)
+    elif command == "web-link-validate":
+        current_web_link(*args)
+    elif command == "web-link-display":
+        display_web_link(*args)
     elif command == "dns":
         dns_check(Path(args[0]).read_text(), Path(args[1]).read_text(), args[2])
     elif command == "domain":

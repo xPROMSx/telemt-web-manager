@@ -29,7 +29,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xPROMSx/telemt-web-manager/m
 ```
 
 The installer installs only the manager and launcher, then opens the menu
-in an interactive terminal. Install missing packages beforehand.
+in an interactive terminal. For a menu-selected action, the manager lists missing
+Ubuntu tools and their packages, then asks once:
+`Install missing packages now? [y/N]`. Only Y/y permits `apt-get update` and
+installation of the listed packages; after rechecking tools, the same action
+continues without restarting the manager. Declining prints an exact manual command.
+CLI actions never prompt for or run apt, even on a TTY.
+Supported Ubuntu/systemd and an existing Nginx with a supported topology remain
+prerequisites: the manager does not provision that environment automatically.
 Telemt is installed separately through Install in the menu.
 
 ## First run
@@ -40,15 +47,16 @@ Open the menu again:
 telemt-web-manager
 ```
 
-Manager 0.1.3 menu:
+Manager 0.1.4 menu:
 
 ```text
 1. Install
 2. Update
 3. Check
 4. Repair
-5. Uninstall Telemt
-6. Exit
+5. Show current WEB link
+6. Uninstall Telemt
+7. Exit
 ```
 
 | Function | Purpose |
@@ -57,6 +65,7 @@ Manager 0.1.3 menu:
 | Update | Update the **Telemt binary** to the supported version with validation and rollback on failure. Does not update the manager or TOML. |
 | Check | Verify managed files, versions, service, HTTP/TLS, SOCKS5 and certificate renewal without changing configuration or services. |
 | Repair | Restart verified Telemt and reload validated Nginx configuration. Does not reconstruct changed or damaged files. |
+| Show current WEB link | Display the existing manager-owned WEB link only in an interactive terminal; no repair or file changes. |
 | Uninstall Telemt | Transactionally remove only a proven manager-owned Telemt deployment and its WEB Nginx integration; retain the manager and preserve the certificate by default. |
 | Exit | Leave the menu. |
 
@@ -70,9 +79,19 @@ and optional SOCKS5 address. DNS must contain exactly one A record matching that
 with no CNAME or AAAA. Ports `127.0.0.1:7444` and `127.0.0.1:18080` must be free.
 New certificate issuance requires an ACME email and agreement consent.
 
-The Telegram link is saved in `/var/lib/telemt-web-manager/web-link.txt` with mode
-0600. Telemt also logs links to journald. The link, config, journals and backups
-contain secrets; do not publish them.
+The manager saves the Telegram WEB link in
+`/var/lib/telemt-web-manager/web-link.txt` (root, 0600). It is a bearer secret:
+anyone holding it can connect; do not publish it, config, journals or backups.
+**5. Show current WEB link** validates the manifest, file permissions and the
+link's domain/secret against TOML, then displays the existing link. It needs
+neither a running service nor a valid certificate, and does not repair or
+regenerate anything. Failure does not disclose the secret.
+
+After a successful fresh Install selected through the menu, the same display
+appears only after commit. Both stdin and stdout must be TTYs;
+CLI `--install`, unattended execution and redirected output report only the
+private file path. A nonempty `NO_COLOR` or `TERM=dumb` disables terminal colors.
+There is no separate CLI command to print the secret.
 
 To update **the manager itself**, close previously opened menus and rerun the
 quick installation command. The existing Telemt deployment is preserved.
@@ -150,7 +169,8 @@ retained for manual review. Unmanaged Telemt replacement is outside this feature
   are not automatically supported.
 - Enabled conntrack control requires `conntrack`, iptables/ip6tables/nft
   and `CAP_NET_ADMIN`. Before installation, `conntrack` is checked on
-  the root shell PATH and systemd's default PATH. The manager installs no packages.
+  the root shell PATH and systemd's default PATH. Only a menu-selected action with
+  Y/y confirmation can install missing allowlisted Ubuntu tool packages.
   `CAP_NET_ADMIN` grants the service broad network authority.
 - Unknown Nginx topology, changed managed files or incompatible configuration
   cause refusal. No automatic TOML migrations or firewall/UFW setup.
@@ -200,6 +220,11 @@ The same WEB link worked from a real Telegram client. The single known WARN,
 not a new regression or release blocker. This acceptance does not validate every
 configuration or architecture.
 Reinstall is not added in 0.1.3.
+
+While preparing 0.1.4 live acceptance, the owner installed the exact PR #7 candidate
+on clean Ubuntu 26.04.1 LTS. Menu Install safely stopped before mutation because
+`conntrack` was absent. The follow-up package-install offer still requires repeat
+live acceptance of this scenario.
 
 ## Advanced / manual installation
 

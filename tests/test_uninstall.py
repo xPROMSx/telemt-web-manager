@@ -245,7 +245,7 @@ class UninstallTests(unittest.TestCase):
         os.close(slave)
         output=b''
         try:
-            os.write(master,b'5\nCANCEL\n')
+            os.write(master,b'6\nCANCEL\n')
             deadline=time.monotonic()+10
             while p.poll() is None and time.monotonic()<deadline:
                 if select.select([master],[],[],0.1)[0]:
@@ -256,8 +256,8 @@ class UninstallTests(unittest.TestCase):
                 try: output+=os.read(master,4096)
                 except OSError: break
             self.assertEqual(p.returncode,0,output)
-            self.assertIn(b'5. Uninstall Telemt',output)
-            self.assertIn(b'6. Exit',output)
+            self.assertIn(b'6. Uninstall Telemt',output)
+            self.assertIn(b'7. Exit',output)
             self.assertIn(b'Type UNINSTALL',output)
             self.assertIn(b'Uninstall cancelled.',output)
             self.assertNotIn(b'UNEXPECTED_BACKUP',output)

@@ -4,7 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
-readonly SCRIPT_VERSION=0.1.3
+readonly SCRIPT_VERSION=0.1.4
 readonly SUPPORTED_TELEMT_VERSION=3.5.12
 readonly SUPPORTED_TELEMT_COMMIT=c4555e25f39dd5be200ccf6353f7d82bfcf89131
 readonly TELEMT_SHA256_X86_64=92bfaa6177d87790bae79caea08d8ddddd0ca3ebc95545c1d62374897592c6c3
@@ -28,6 +28,20 @@ ARMED=0 INSTALLING=0 NGINX_CHANGED=0 UNINSTALLING=0
 CONFIRM_UNINSTALL=0 DELETE_CERTIFICATE=0 CERT_CLEANUP_RUNNING=0 UNINSTALL_ENABLED='' UNINSTALL_ACTIVE=''
 CERT_ONLY=0 PLAN_MODE=web
 FRESH_JOURNAL='' FRESH_SERVICE_ATTEMPTED=0
+INTERACTIVE_INSTALL=0 MENU_ACTION=0
+# Reviewed Ubuntu tools only; no user input is used as an apt package name.
+readonly -A TOOL_PACKAGES=(
+    [curl]=curl [tar]=tar [openssl]=openssl [jq]=jq [dig]=dnsutils
+    [python3]=python3 [certbot]=certbot [flock]=util-linux [ss]=iproute2
+    [iptables]=iptables [ip6tables]=iptables [iptables-save]=iptables [ip6tables-save]=iptables
+    [nft]=nftables [conntrack]=conntrack [getent]=libc-bin
+    [useradd]=passwd [userdel]=passwd [groupadd]=passwd [groupdel]=passwd [find]=findutils
+    [awk]=mawk [grep]=grep [sed]=sed [cmp]=diffutils
+    [cat]=coreutils [chmod]=coreutils [chown]=coreutils [cp]=coreutils [cut]=coreutils
+    [date]=coreutils [dirname]=coreutils [id]=coreutils [install]=coreutils [mktemp]=coreutils
+    [mv]=coreutils [readlink]=coreutils [rm]=coreutils [sha256sum]=coreutils
+    [sleep]=coreutils [stat]=coreutils [timeout]=coreutils [tr]=coreutils [uname]=coreutils
+)
 declare -a CHANGED=() ORIGINAL=()
 
 say() { printf '%s\n' "$*"; }
@@ -181,23 +195,102 @@ take_lock() {
     fi
 }
 
-preflight() {
+platform_preflight() {
+    local init dep
     (( EUID == 0 )) || die 'Run as root; this manager never invokes sudo'
     [[ ${BASH_VERSINFO[0]} -ge 5 ]] || die 'Bash 5+ required'
-    [[ -d /run/systemd/system ]] || die 'systemd is required'
+    [[ -d /run/systemd/system ]] || die 'Active systemd environment required'
+    IFS= read -r init </proc/1/comm
+    [[ $init == systemd ]] || die 'systemd must already be the active init system'
     # shellcheck source=/dev/null
     source /etc/os-release
     [[ $ID == ubuntu && ( $VERSION_ID == 24.04 || $VERSION_ID == 26.04 ) ]] || die 'Supported OS: Ubuntu 24.04 / 26.04'
     case $(uname -m) in x86_64|aarch64|arm64) ;; *) die 'Unsupported architecture';; esac
-    check_dependencies
+    for dep in systemctl systemd-path journalctl; do
+        command -v "$dep" >/dev/null || die "Existing systemd tooling required: $dep (not installed automatically)"
+    done
+}
+
+preflight() {
+    platform_preflight
+    check_dependencies "${1:---install}"
+}
+
+dependency_commands() {
+    case $1 in
+        show-web-link) printf '%s\n' python3 flock stat;;
+        --install|--update|--check|--repair|--uninstall)
+            # Preserve the existing shared prerequisites, including archive tooling.
+            printf '%s\n' curl tar openssl jq dig python3 certbot flock ss sha256sum timeout \
+                iptables ip6tables nft conntrack getent useradd userdel groupdel \
+                awk grep sed cmp cat chmod chown cp cut date dirname id install mktemp mv readlink rm sleep stat tr uname
+            if [[ $1 == --uninstall ]]; then printf '%s\n' groupadd find iptables-save ip6tables-save; fi;;
+        *) die 'Unknown dependency action';;
+    esac
+}
+
+manual_dependency_command() {
+    say 'Install manually:' >&2
+    printf 'apt-get update && apt-get install -y --no-install-recommends' >&2
+    printf ' %s' "$@" >&2
+    printf '\n' >&2
 }
 
 check_dependencies() {
-    local dep service_path
-    for dep in curl tar openssl jq dig python3 nginx certbot flock systemctl ss sha256sum timeout iptables ip6tables nft conntrack getent useradd userdel groupdel systemd-path; do need "$dep"; done
+    local action=${1:---install} dep package answer service_path commands installed=0
+    local -a required=() missing=() packages=()
+    local -A selected=()
+    if [[ $action != show-web-link ]]; then
+        command -v nginx >/dev/null || die 'Existing Nginx installation and supported topology required; Nginx is not installed automatically'
+    fi
+    commands=$(dependency_commands "$action") || die 'Cannot determine required dependencies'
+    mapfile -t required <<<"$commands"
+    for dep in "${required[@]}"; do
+        if ! command -v "$dep" >/dev/null; then
+            missing+=("$dep")
+            package=${TOOL_PACKAGES[$dep]}
+            if [[ -z ${selected[$package]:-} ]]; then
+                packages+=("$package"); selected[$package]=1
+            fi
+        fi
+    done
+    if (( ${#missing[@]} )); then
+        # Show-link normally needs no platform/service check. Before any apt offer,
+        # however, it must prove the same immutable Ubuntu/systemd contract.
+        if [[ $action == show-web-link ]]; then platform_preflight; fi
+        say 'Missing required dependencies:' >&2
+        for dep in "${missing[@]}"; do say "  $dep -> package: ${TOOL_PACKAGES[$dep]}" >&2; done
+        say "Packages to install: ${packages[*]}" >&2
+        if (( ! MENU_ACTION )) || [[ ! -t 0 || ! -t 1 ]]; then
+            manual_dependency_command "${packages[@]}"
+            die 'Required dependencies missing; no packages installed'
+        fi
+        read -r -p 'Install missing packages now? [y/N] ' answer || answer=''
+        if [[ $answer != y && $answer != Y ]]; then
+            say 'Dependency installation declined.' >&2
+            manual_dependency_command "${packages[@]}"
+            die 'Run Telemt WEB Manager again after installing the dependencies'
+        fi
+        command -v apt-get >/dev/null || {
+            manual_dependency_command "${packages[@]}"
+            die 'apt-get unavailable; package installation requires manual review'
+        }
+        say 'Updating Ubuntu package metadata...'
+        DEBIAN_FRONTEND=noninteractive apt-get update || die 'apt-get update failed; selected action was not started'
+        say "Installing packages: ${packages[*]}"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}" || die 'apt-get install failed; selected action was not started'
+        hash -r
+        for dep in "${required[@]}"; do
+            command -v "$dep" >/dev/null || die "Required command still missing after package installation: $dep; selected action was not started"
+        done
+        installed=1
+    fi
     python3 -c 'import tomllib' || die 'Python 3.11+ required'
-    service_path=$(systemd-path search-binaries-default) || die 'Cannot determine systemd runtime PATH'
-    PATH="$service_path" command -v conntrack >/dev/null || die 'conntrack unavailable on the systemd runtime PATH (see README)'
+    if [[ $action != show-web-link ]]; then
+        service_path=$(systemd-path search-binaries-default) || die 'Cannot determine systemd runtime PATH'
+        PATH="$service_path" command -v conntrack >/dev/null || die 'conntrack unavailable on the systemd runtime PATH (see README)'
+    fi
+    if (( installed )); then say 'Dependencies installed successfully. Continuing...'; fi
 }
 
 download_candidate() {
@@ -688,6 +781,21 @@ prompt_install() {
     fi
 }
 
+present_web_link() {
+    [[ -t 0 && -t 1 ]] || { say 'WEB link display requires interactive input and output.' >&2; return 1; }
+    helper web-link-display "$STATE" "$CONFIG" || {
+        say 'No valid manager-owned WEB link is available.' >&2; return 1;
+    }
+}
+
+show_current_web_link() {
+    (( EUID == 0 )) || die 'Run as root; this manager never invokes sudo'
+    [[ -t 0 && -t 1 ]] || die 'WEB link display requires interactive input and output.'
+    check_dependencies show-web-link
+    take_lock shared
+    present_web_link
+}
+
 install_manager() {
     if [[ -f $STATE/manifest.json ]]; then
         local requested_domain=$DOMAIN
@@ -780,8 +888,10 @@ install_manager() {
         '{schema:1,domain:$domain,public_ip:$public_ip,unit_sha256:$unit,nginx_sha256:$nginx,acme_webroot:$acme}' >"$STATE/manifest.json"
     ARMED=0
     say "Private WEB link: $STATE/web-link.txt (0600)"
-    say 'Installed. WEB link is generated by Telemt in its journal; treat it as a secret.'
-    say 'Run: journalctl -u telemt.service (privately; do not paste unredacted logs).'
+    say 'Installed. The manager saved the private WEB link; treat it as a bearer secret.'
+    if (( INTERACTIVE_INSTALL )) && [[ -t 0 && -t 1 ]]; then
+        present_web_link || say 'Install committed. Review the private WEB link state; no link was regenerated.' >&2
+    fi
 }
 
 load_installation() {
@@ -1071,6 +1181,7 @@ EOF
 
 main() {
     local action='' choice
+    MENU_ACTION=0 INTERACTIVE_INSTALL=0
     while (( $# )); do
         case $1 in
             --help) usage; return;;
@@ -1087,15 +1198,17 @@ main() {
     done
     if [[ -z $action ]]; then
         [[ -t 0 ]] || die 'No interactive terminal; specify an action'
-        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Uninstall Telemt\n6. Exit\n'
+        printf '1. Install\n2. Update\n3. Check\n4. Repair\n5. Show current WEB link\n6. Uninstall Telemt\n7. Exit\n'
         read -r -p '> ' choice
-        case $choice in 1) action=--install;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=--uninstall;; 6) return;; *) die 'Invalid selection';; esac
+        MENU_ACTION=1
+        case $choice in 1) action=--install; INTERACTIVE_INSTALL=1;; 2) action=--update;; 3) action=--check;; 4) action=--repair;; 5) action=show-web-link;; 6) action=--uninstall;; 7) return;; *) die 'Invalid selection';; esac
     fi
     if (( CONFIRM_UNINSTALL || DELETE_CERTIFICATE )); then
         [[ $action == --uninstall ]] || die 'Uninstall flags require --uninstall'
         (( ! DELETE_CERTIFICATE || CONFIRM_UNINSTALL )) || die '--delete-certificate requires --confirm-uninstall'
     fi
-    preflight
+    if [[ $action == show-web-link ]]; then show_current_web_link; return; fi
+    preflight "$action"
     TMP=$(mktemp -d /tmp/telemt-web-manager.XXXXXXXX)
     trap cleanup EXIT
     trap 'exit 130' INT

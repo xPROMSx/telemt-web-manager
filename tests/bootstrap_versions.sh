@@ -35,7 +35,7 @@ prefix = '\n'.join(Path('telemt-web-manager.sh').read_text().split('\n')[:6]) + 
 script.write_text(prefix+'readonly SCRIPT_VERSION=0.1.1\ntouch '+str(marker)+'\n')
 assert manager_version(script) == '0.1.1' and not marker.exists()
 # Real manager declarations and variable references remain supported.
-assert manager_version('telemt-web-manager.sh') == '0.1.3'
+assert manager_version('telemt-web-manager.sh') == '0.1.4'
 for bad in ('', '# readonly SCRIPT_VERSION=0.1.1', 'readonly SCRIPT_VERSION=01.1.1',
             'readonly SCRIPT_VERSION="0.1.1"', ' readonly SCRIPT_VERSION=0.1.1',
             'readonly SCRIPT_VERSION=0.1.1 # comment', 'SCRIPT_VERSION=0.1.1',
@@ -58,7 +58,7 @@ PY
 } | python3 - "$SANDBOX"
 
 # Validate the actual downloaded-pair path without root or executing either file.
-BOOTSTRAP_TMP=$SANDBOX MANAGER_TAG=v0.1.3
+BOOTSTRAP_TMP=$SANDBOX MANAGER_TAG=v0.1.4
 cp telemt-web-manager.sh "$SANDBOX/telemt-web-manager.sh"
 cp lib/safety.py "$SANDBOX/safety.py"
 validate_manager_pair

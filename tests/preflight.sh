@@ -8,14 +8,15 @@ sandbox=$(mktemp -d)
 trap 'rm -rf -- "$sandbox"' EXIT
 export DEPENDENCY_TOOL_DIR="$sandbox/tools"
 mkdir "$DEPENDENCY_TOOL_DIR"
-for tool in curl tar openssl jq dig nginx certbot flock systemctl ss sha256sum timeout iptables ip6tables nft getent useradd userdel groupdel; do
+for tool in "${!TOOL_PACKAGES[@]}" nginx systemctl systemd-path journalctl; do
+    [[ $tool != conntrack ]] || continue
     printf '#!/bin/bash\nexit 0\n' >"$DEPENDENCY_TOOL_DIR/$tool"
     chmod 0755 "$DEPENDENCY_TOOL_DIR/$tool"
 done
 python=$(command -v python3)
-ln -s "$python" "$DEPENDENCY_TOOL_DIR/python3"
-ln -s /usr/bin/mktemp "$DEPENDENCY_TOOL_DIR/mktemp"
-ln -s /usr/bin/rm "$DEPENDENCY_TOOL_DIR/rm"
+ln -sf "$python" "$DEPENDENCY_TOOL_DIR/python3"
+ln -sf /usr/bin/mktemp "$DEPENDENCY_TOOL_DIR/mktemp"
+ln -sf /usr/bin/rm "$DEPENDENCY_TOOL_DIR/rm"
 # The generated child script expands its own environment at execution time.
 # shellcheck disable=SC2016
 printf '#!/bin/bash\nprintf "%%s\\n" "$DEPENDENCY_TOOL_DIR"\n' >"$DEPENDENCY_TOOL_DIR/systemd-path"
@@ -36,7 +37,7 @@ for missing in conntrack useradd userdel groupdel; do
     result=$?
     set -e
     [[ $result != 0 && ! -e $sandbox/install-reached && ! -e $sandbox/lock-reached ]]
-    grep -q "Missing dependency: $missing" "$sandbox/refused"
+    grep -q "$missing -> package: ${TOOL_PACKAGES[$missing]}" "$sandbox/refused"
     if [[ $missing != conntrack ]]; then mv "$sandbox/$missing" "$DEPENDENCY_TOOL_DIR/$missing"; fi
     printf 'ok - missing %s preflight refuses before release/Certbot/Nginx/files/directories/accounts/systemd and lock setup\n' "$missing"
 done

@@ -282,6 +282,7 @@ shellcheck -x install.sh telemt-web-manager.sh tests/*.sh
 bash tests/run.sh
 bash tests/fresh.sh
 bash tests/fresh-rollback.sh # late journal failure, ACME preservation/retry, partial failures
+sudo python3 tests/web_link_fixture.py # Root-owned private link, real PTY; mocked Install lifecycle
 sudo bash tests/fresh-account.sh # disposable runner only: real account/runtime cleanup
 bash tests/preflight.sh # Missing conntrack/account tools before transaction dispatch
 bash tests/download.sh   # Real pinned download; mocked bad-digest/URL/version negatives
@@ -499,13 +500,15 @@ install -m 0644 lib/safety.py /opt/telemt-web-manager/lib/
 /opt/telemt-web-manager/telemt-web-manager.sh
 ```
 
-Keep the installation root-owned and unwritable by others. Install missing
-manager dependencies deliberately, without replacing the working Nginx stack:
+Keep the installation root-owned and unwritable by others. Menu actions may offer
+missing tool packages after confirmation; CLI users install them manually without
+replacing the working Nginx stack. Manual development tooling example:
 
 ```bash
 apt-get update
 apt-get install git shellcheck bash python3 curl ca-certificates tar openssl jq \
-  dnsutils util-linux iproute2 coreutils passwd certbot iptables nftables conntrack
+  dnsutils util-linux iproute2 coreutils libc-bin passwd findutils mawk grep sed diffutils \
+  certbot iptables nftables conntrack
 ```
 
 On a clean package Nginx, stream usually needs `libnginx-mod-stream`; match modules
@@ -513,10 +516,88 @@ to the installed Nginx and verify `nginx -t`. The manager checks dependencies.
 Bootstrap options: `--version v0.1.1` selects a published release; `--no-start`
 suppresses the menu. See [manager bootstrap](#manager-bootstrap).
 
+## Missing Ubuntu tools (0.1.4)
+
+After selecting a menu action, missing tool commands and their fixed Ubuntu
+packages are listed together. One `Install missing packages now? [y/N]` prompt
+allows only Y/y. With that confirmation, apt-get updates metadata and installs only
+the listed, deduplicated requested packages with `--no-install-recommends` and
+`DEBIAN_FRONTEND=noninteractive`; normal required package dependencies remain apt's
+responsibility. Executables are rechecked, including Python tomllib and conntrack
+on systemd's default PATH, before the selected action continues in the same process.
+No apt operation occurs when tools are present or confirmation is declined.
+Update/install failure or unresolved commands prevents the manager action.
+
+Explicit CLI actions never offer/install packages, even on a TTY. Missing tools
+produce a manual command, for example:
+
+```bash
+apt-get update && apt-get install -y --no-install-recommends conntrack
+```
+
+Root, Bash 5+, active systemd, supported Ubuntu 24.04/26.04 and x86_64/aarch64 must
+be proven before an apt offer. Existing systemctl/systemd-path/journalctl and
+existing Nginx/topology are environment requirements, not auto-install targets.
+No Nginx, init system, Xray/SOCKS/WARP, repositories or firewall are provisioned.
+Show current WEB link checks only python3, flock and stat; with those present it
+retains its no-service/no-certificate-health path. If one is missing, any package
+offer additionally requires the immutable platform validation.
+
+| Commands | Fixed Ubuntu package |
+| --- | --- |
+| curl / tar / openssl / jq / python3 / certbot | corresponding same-name package |
+| dig | dnsutils |
+| flock | util-linux |
+| ss | iproute2 |
+| iptables, ip6tables, iptables-save, ip6tables-save | iptables |
+| nft / conntrack | nftables / conntrack |
+| getent | libc-bin |
+| useradd, userdel, groupadd, groupdel | passwd |
+| find | findutils |
+| awk / grep / sed / cmp | mawk / grep / sed / diffutils |
+| cat, chmod, chown, cp, cut, date, dirname, id, install, mktemp, mv, readlink, rm, sha256sum, sleep, stat, timeout, tr, uname | coreutils |
+
+Install/Update/Check/Repair retain the shared tool prerequisites; Uninstall also
+checks groupadd, find and IPv4/IPv6 save commands before mutation. Archive tar is
+retained from the prior declared prerequisites; safe extraction itself is Python.
+Git and ShellCheck in the manual development example are not manager auto-install
+targets. Package names never come from user input or external release data.
+
+Owner finding: exact PR #7 candidate 0.1.4 on clean Ubuntu 26.04.1 LTS stopped
+menu Install before mutation because conntrack was absent. The dependency UX
+follow-up has CI fixture coverage; owner repeat live acceptance remains pending.
+
+## Current WEB link (manager 0.1.4)
+
+```text
+1. Install
+2. Update
+3. Check
+4. Repair
+5. Show current WEB link
+6. Uninstall Telemt
+7. Exit
+```
+
+Item 5 uses a shared manager lock and reads the existing private
+`/var/lib/telemt-web-manager/web-link.txt` (root, 0600). It validates safe paths,
+root ownership/modes, the schema-1 manifest and the exact single-line URL against
+the managed TOML domain and web-user secret. It does not require service or
+certificate health, mutate state, regenerate a secret or repair a missing link.
+Unsafe/missing/mismatched state fails without printing credentials.
+
+The link is a bearer secret; store it privately. Both input and output must be
+interactive terminals. The same presentation follows a committed fresh Install
+selected from the menu, never a CLI `--install` or failed/rolled-back Install.
+Redirected/unattended Install reports the saved path only. Colors require stdout
+TTY and are disabled by nonempty `NO_COLOR` or `TERM=dumb`. No public CLI prints
+the secret. Config, journals and backups also require secret-safe handling.
+
 ## Managed uninstall
 
-Manager 0.1.2 adds `--uninstall --confirm-uninstall` and menu item 5, followed by
-Exit as item 6. The interactive confirmation is the exact word `UNINSTALL`;
+Managed uninstall was introduced in 0.1.2 as `--uninstall --confirm-uninstall`.
+In the current 0.1.4 menu, Uninstall is item 6 and Exit is item 7.
+The interactive confirmation is the exact word `UNINSTALL`;
 only then is certificate deletion offered with default N. `--delete-certificate`
 requires both uninstall and explicit confirmation. This removes Telemt, not the
 manager, and does not adopt or replace manual/unmanaged installations.

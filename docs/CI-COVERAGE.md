@@ -14,6 +14,7 @@ means temporary fixture ownership, not ownership of a deployed VPS installation.
 | Fresh / fresh-rollback | M | M | M | M | R | M | M |
 | Download integrity | R/M | — | — | — | R | — | — |
 | Bootstrap SemVer / preflight | — | — | — | — | R | — | — |
+| Private WEB link/root PTY | M (fresh fixture) | M | M | M | R | — | — |
 | Fresh account rollback (sudo) | — | — | — | R | R | — | — |
 | Pin provenance / upstream | R/M | M (Update fixture only) | M (Update fixture only) | M | R | M | M |
 | Pinned staging | R | M | M | M | R | M | M |
@@ -158,3 +159,37 @@ successful-uninstall report. Python tests additionally prohibit pre-stop DATA
 enumeration, prove external ownership scans prune DATA, reject a pre-stop ledger
 as removal authority and refuse a write after the final stopped snapshot. These
 are filesystem/orchestration regressions, not a claim of VPS live acceptance.
+
+## Private WEB link display (0.1.4)
+
+`test_web_link.py` checks canonical URL bytes, supported manifest schema and exact
+TOML domain/secret identity without printing random fixture credentials.
+`sudo python3 tests/web_link_fixture.py` uses real root ownership, safe private
+paths, real PTYs and shared/exclusive locks. It covers the exact seven-entry menu,
+read-only file hashes/modes, default ANSI colors, NO_COLOR/TERM=dumb and both TTY
+gates. Missing files, symlinks/hardlinks/FIFO, wrong owner/mode, unsafe ancestors,
+malformed URL/manifest and domain/secret mismatch refuse without secret output.
+
+The existing fresh transaction fixture additionally exercises the actual Install
+and common presentation under a PTY, with service/certificate/path health mocked:
+link output follows ARMED=0, manifest and final health checks; rejected candidates
+print no link. CLI Install even on a PTY, and redirected menu Install, report only
+the saved private path. Menu provenance is checked separately. Captured PTY output
+stays in memory and is never copied into CI diagnostics. The existing noninteractive
+fresh-install redaction assertions remain and also forbid any `tg://` output.
+
+## Menu dependency setup follow-up (0.1.4)
+
+`test_dependencies.py` runs real main/menu/preflight dependency collection in PTYs
+with isolated command files, a mocked immutable platform and a mocked apt-get.
+It covers single confirmation, Y/y, decline/default, CLI even on TTY, redirected
+output, fixed package deduplication, mandatory executable recheck, apt update and
+install failures, unavailable apt, Nginx prerequisite refusal, Uninstall extras and
+post-install conntrack systemd PATH refusal. Platform/action PID equality proves
+continuation without a manager restart; no CI package set is changed by these tests.
+
+The native-root WEB-link fixture additionally exercises actual Ubuntu/architecture/
+init guards before apt and actual menu Show with conntrack, Nginx, Certbot and
+systemd tools absent. The original strict private-file/TTY/color tests remain.
+The owner clean Ubuntu finding is recorded in OPERATIONS; follow-up live acceptance
+is pending, and mocked apt fixtures do not claim real-server package installation.

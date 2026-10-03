@@ -115,6 +115,20 @@ journalctl() { cat "$ROOT/tests/fixtures/journal/telemt-3.5.10-live-warnings.jso
 recent_logs() { printf ok >"$SANDBOX/log-health"; official_recent_logs "$@"; }
 SOCKS=${FIXTURE_SOCKS:-direct}
 socks_probe() { return 0; } # Config selection only; egress probes have separate coverage.
+# Opt-in PTY fixture: actual fresh transaction and presentation, mocked lifecycle.
+if [[ ${FIXTURE_LINK_UX:-0} == 1 ]]; then
+    eval "$(declare -f present_web_link | sed '1s/present_web_link/production_present_web_link/')"
+    present_web_link() {
+        (( ! ARMED && INSTALLING )) || return 94
+        [[ -f $STATE/manifest.json && -f $SANDBOX/final-validated && -f $SANDBOX/log-health ]] || return 95
+        printf 'FIXTURE_COMMITTED\n'
+        production_present_web_link
+    }
+    (set -Eeuo pipefail; trap cleanup EXIT
+     INTERACTIVE_INSTALL=${FIXTURE_MENU_INSTALL:-1}
+     install_manager)
+    exit 0
+fi
 if [[ -n ${FIXTURE_FAILURE:-} ]]; then
     # The account commands remain inert; certificate/Nginx transaction and fresh
     # orchestration below are production code, including the EXIT rollback trap.
@@ -258,6 +272,7 @@ python3 - "$CONFIG" "$SANDBOX/manager.log" "$TMP/fresh.toml" "$TMP/compat-data" 
 import pathlib, sys, tomllib
 c = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
 assert c['access']['users']['web-user'] not in pathlib.Path(sys.argv[2]).read_text()
+assert 'tg://' not in pathlib.Path(sys.argv[2]).read_text()
 final = pathlib.Path(sys.argv[1]).read_text()
 assert pathlib.Path(sys.argv[3]).read_text().replace(sys.argv[4], sys.argv[5]) == final
 assert sys.argv[4] not in final
